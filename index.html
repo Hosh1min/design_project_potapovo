@@ -279,12 +279,21 @@ function photosSsge(html){
 }
 // --- myhome.ge photos: /statements/ images on tnet CDN, prefer full over _thumb ---
 function photosMyhome(html){
-  const seen = new Map();
+  const rank = u => {
+    const s = u.toLowerCase();
+    if(/_thumb|_small|_blur|_mob/.test(s)) return 0;
+    if(/_large|_big|_hd|_orig|_full/.test(s)) return 3;
+    if(/_medium|_mid/.test(s)) return 2;
+    return 1;
+  };
+  const groups = new Map();  // hash -> {u, r}
   for(const mm of html.matchAll(/https:\/\/static-statements\.tnet\.ge\/[^\s"'()<>\\]*?\/statements\/[^\s"'()<>\\]+?\.(?:webp|jpg|jpeg|png)/gi)){
-    const u = mm[0], base = u.replace('_thumb','');
-    if(!seen.has(base) || !u.includes('_thumb')) seen.set(base, u);
+    const u = mm[0];
+    const core = u.split('/').pop().replace(/\.[a-z0-9]+$/i,'').split('_')[0];
+    const r = rank(u), cur = groups.get(core);
+    if(!cur || r > cur.r) groups.set(core, {u, r});
   }
-  return [...seen.values()];
+  return [...groups.values()].map(x=>x.u);
 }
 
 function parseSsge(url, doc, html){
