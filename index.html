@@ -213,14 +213,23 @@ const LS = 'ssge-flat-match-v1';
 const TITLE_RE = /(\d+)\s*room[\s\S]*?For\s+(Rent|Sale)\.\s*(.+?)\s*,\s*([\d\s,]+?)\s*([$\u20BE])/i;
 
 const DEFAULT_URLS = [
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-20764775/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-22529306/",
+"https://www.myhome.ge/en/real-estate/4-room-apartment-for-rent-in-vake-25793073/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-vake-25793059/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-mtatsminda-25786833/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-17278574/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-17653391/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-24296388/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-mtatsminda-25432990/",
+"https://www.myhome.ge/en/real-estate/3-room-apartment-for-rent-in-saburtalo-22812851/",
+"https://www.myhome.ge/en/real-estate/4-room-apartment-for-rent-in-vake-22519478/",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Chugureti-36397048",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Saburtalo-36516807",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Saburtalo-36454512",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Ortachala-35753231",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Saburtalo-36287342",
-"https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Didi-digomi-35844610",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Saburtalo-34665033",
-"https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Digomi-35060081",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Vazisubani-36373804",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Sololaki-36435533",
 "https://home.ss.ge/en/real-estate/3-room-Flat-For-Rent-Ortachala-28408234",
@@ -254,7 +263,11 @@ function save(){ localStorage.setItem(LS, JSON.stringify(store)); }
 /* ---------- parsing ---------- */
 function idFromUrl(url){ const m = url.match(/-(\d+)(?:$|[/?#])/); return m?m[1]:url; }
 
-function parsePhotos(html){
+function titleCase(s){ return String(s||'').replace(/\S+/g, w=>w.charAt(0).toUpperCase()+w.slice(1)); }
+function bathVal(v){ return /^\d+$/.test(v) ? +v : v; }
+
+// --- ss.ge photos: biggest date-folder group, drop avatars, strip _Thumb ---
+function photosSsge(html){
   const groups = {};
   for(const mm of html.matchAll(/https:\/\/static\.ss\.ge\/(\d{8})\/[^\s"'()<>\\]+?\.(?:jpg|jpeg|png|webp)/gi)){
     const full = mm[0].replace('_Thumb','');
@@ -264,22 +277,56 @@ function parsePhotos(html){
   for(const k in groups){ if(groups[k].size>best){ best=groups[k].size; photos=[...groups[k]]; } }
   return photos;
 }
+// --- myhome.ge photos: /statements/ images on tnet CDN, prefer full over _thumb ---
+function photosMyhome(html){
+  const seen = new Map();
+  for(const mm of html.matchAll(/https:\/\/static-statements\.tnet\.ge\/[^\s"'()<>\\]*?\/statements\/[^\s"'()<>\\]+?\.(?:webp|jpg|jpeg|png)/gi)){
+    const u = mm[0], base = u.replace('_thumb','');
+    if(!seen.has(base) || !u.includes('_thumb')) seen.set(base, u);
+  }
+  return [...seen.values()];
+}
 
-function parseListing(url, html){
-  const doc = new DOMParser().parseFromString(html,'text/html');
+function parseSsge(url, doc, html){
   let title = (doc.querySelector('title')?.textContent||'').trim();
   if(!title) title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()||'';
   let rooms=null, district=null, price=null, currency=null;
   const m = title.match(TITLE_RE);
   if(m){ rooms=+m[1]; district=m[3].trim(); price=parseInt(m[4].replace(/\D/g,'')); currency = m[5]==='$'?'USD':'GEL'; }
   if(rooms==null || district==null){
-    const um = url.match(/\/(\d+)-room-\w+-For-(?:Rent|Sale)-(.+?)-\d+/);
+    const um = url.match(/\/(\d+)-room-\w+-For-(?:Rent|Sale)-(.+?)-\d+/i);
     if(um){ if(rooms==null)rooms=+um[1]; if(district==null)district=um[2].replace(/-/g,' '); }
   }
   const text = doc.body ? doc.body.textContent : html;
   const bm = text.match(/Bathroom\W{0,12}(\d+)/);
   const bathrooms = bm ? +bm[1] : null;
-  return {id:idFromUrl(url), url, district:district||'—', price, currency:currency||'', rooms, bathrooms, photos:parsePhotos(html)};
+  return {id:idFromUrl(url), url, district: district?titleCase(district):'—', price, currency:currency||'', rooms, bathrooms, photos:photosSsge(html)};
+}
+
+function parseMyhome(url, doc, html){
+  let title = (doc.querySelector('title')?.textContent||'').trim();
+  if(!title) title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()||'';
+  let rooms=null, district=null, price=null, currency=null;
+  const m = title.match(/(\d+)\s*room[\s\S]*?for\s+\w+\s+in\s+(.+?)\s*,\s*([\d\s,]+?)\s*([$\u20BE])\s*,/i);
+  if(m){ rooms=+m[1]; district=m[2].trim(); price=parseInt(m[3].replace(/\D/g,'')); currency = m[4]==='$'?'USD':'GEL'; }
+  if(rooms==null || district==null){
+    const um = url.match(/\/(\d+)-room-apartment-for-(?:rent|sale)-in-(.+?)-\d+/i);
+    if(um){ if(rooms==null)rooms=+um[1]; if(district==null)district=um[2].replace(/-/g,' '); }
+  }
+  if(price==null){
+    const pa = doc.querySelector('meta[property="product:price:amount"]')?.getAttribute('content');
+    const pc = doc.querySelector('meta[property="product:price:currency"]')?.getAttribute('content');
+    if(pa){ price=parseInt(pa); currency = currency||pc||'GEL'; }
+  }
+  const text = doc.body ? doc.body.textContent : html;
+  const bm = text.match(/Bathrooms?\W{0,12}(\d+\+?)/);
+  const bathrooms = bm ? bathVal(bm[1]) : null;
+  return {id:idFromUrl(url), url, district: district?titleCase(district):'—', price, currency:currency||'', rooms, bathrooms, photos:photosMyhome(html)};
+}
+
+function parseListing(url, html){
+  const doc = new DOMParser().parseFromString(html,'text/html');
+  return /myhome\.ge/i.test(url) ? parseMyhome(url, doc, html) : parseSsge(url, doc, html);
 }
 
 async function fetchHTML(url){
